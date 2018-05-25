@@ -92,6 +92,9 @@ struct vfat_data {
     gid_t mount_gid;
     time_t mount_time;
     /* TODO: add your code here */
+    size_t      root_max_entries;
+    size_t      total_sectors;
+    size_t      fat_count;
     size_t      fat_entries;
     off_t       cluster_begin_offset;
     size_t      direntry_per_cluster;

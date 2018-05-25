@@ -20,7 +20,7 @@
 #include "util.h"
 #include "debugfs.h"
 
-#define DEBUG_PRINT(...) printf(__VA_ARGS)
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
 
 iconv_t iconv_utf16;
 char* DEBUGFS_PATH = "/.debug";
@@ -44,6 +44,38 @@ vfat_init(const char *dev)
         err(1, "open(%s)", dev);
     if (pread(vfat_info.fd, &s, sizeof(s), 0) != sizeof(s))
         err(1, "read super block");
+    
+    /* Parsing and storing BPB information */
+    vfat_info.root_max_entries = s.root_max_entries;
+    vfat_info.total_sectors = (s.total_sectors_small == 0) ? s.total_sectors : s.total_sectors_small;
+    vfat_info.fat_count = s.fat_count;
+    vfat_info.bytes_per_sector = s.bytes_per_sector;
+    vfat_info.sectors_per_cluster = s.sectors_per_cluster;
+    vfat_info.reserved_sectors = s.reserved_sectors;
+    vfat_info.sectors_per_fat = (s.sectors_per_fat_small == 0) ? s.sectors_per_fat : s.sectors_per_fat_small;
+    // vfat_info.cluster_size = ;
+    // vfat_info.fat_size;
+    // vfat_info.fat;
+
+    /* Check if the filesystem mounted is FAT32 */
+    size_t root_dir_sectors = ((vfat_info.root_max_entries * 32) + (vfat_info.bytes_per_sector - 1)) /
+                                vfat_info.bytes_per_sector;
+    size_t data_sectors = vfat_info.total_sectors - (vfat_info.reserved_sectors + 
+                            (vfat_info.fat_count * vfat_info.sectors_per_fat) + root_dir_sectors);
+    size_t count_of_clusters = data_sectors / vfat_info.sectors_per_cluster;
+
+    if (count_of_clusters < 65525)
+        err(1, "not a FAT32 drive!");
+
+    /* Parsing and storing BPB information -- continued */
+    // first sector of data region
+    vfat_info.cluster_begin_offset = vfat_info.total_sectors - data_sectors;
+    // number of entries in FAT
+    vfat_info.fat_entries = count_of_clusters + 2;
+    // number of diectory entries per cluster
+    vfat_info.direntry_per_cluster = (vfat_info.sectors_per_cluster * vfat_info.bytes_per_sector) / 32;
+    // first sector of first FAT region
+    vfat_info.fat_begin_offset = vfat_info.reserved_sectors;
 
     /* XXX add your code here */
     vfat_info.root_inode.st_ino = le32toh(s.root_cluster);
