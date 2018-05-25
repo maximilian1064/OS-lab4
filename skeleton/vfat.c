@@ -49,39 +49,51 @@ vfat_init(const char *dev)
     if (pread(vfat_info.fd, &s, sizeof(s), 0) != sizeof(s))
         err(1, "read super block");
     
-    /* Parsing and storing BPB information */
-    vfat_info.root_max_entries = s.root_max_entries;
+    /* 
+     * Parsing and storing BPB information
+     */
+    /* [1] general info */
+    vfat_info.bytes_per_sector = s.bytes_per_sector;
     vfat_info.total_sectors = (s.total_sectors_small == 0) ? s.total_sectors : s.total_sectors_small;
+
+    /* [2] reserved region */
+    vfat_info.reserved_sectors = s.reserved_sectors;
+
+    /* [3] root dir region, not exist in FAT32 */
+    vfat_info.root_dir_sectors = (s.root_max_entries * 32 + vfat_info.bytes_per_sector - 1) /
+                                vfat_info.bytes_per_sector;
+
+    /* [4] FAT region */
     vfat_info.fat_count = s.fat_count;
     // active FAT ID
     vfat_info.fat_in_use = (s.fat_flags & IS_NON_MIRRORED_FAT) ? s.fat_flags & FAT_ID_MASK : 0;
-    vfat_info.bytes_per_sector = s.bytes_per_sector;
-    vfat_info.sectors_per_cluster = s.sectors_per_cluster;
-    vfat_info.reserved_sectors = s.reserved_sectors;
     vfat_info.sectors_per_fat = (s.sectors_per_fat_small == 0) ? s.sectors_per_fat : s.sectors_per_fat_small;
-    // vfat_info.cluster_size = ;
-    // vfat_info.fat_size;
-    // vfat_info.fat;
+    // FAT size in bytes
+    vfat_info.fat_size = vfat_info.sectors_per_fat * vfat_info.bytes_per_sector;
+    // first byte of active FAT
+    vfat_info.fat_begin_offset = (vfat_info.reserved_sectors + vfat_info.fat_in_use * vfat_info.sectors_per_fat) *
+                                    vfat_info.bytes_per_sector;
+
+    /* [5] cluster/data region */
+    vfat_info.sectors_per_cluster = s.sectors_per_cluster;
+    // cluster size in bytes
+    vfat_info.cluster_size = vfat_info.sectors_per_cluster * vfat_info.bytes_per_sector;
+    vfat_info.direntry_per_cluster = vfat_info.cluster_size / 32;
+    // first byte of first cluster 
+    vfat_info.cluster_begin_offset = (vfat_info.reserved_sectors + vfat_info.fat_count * vfat_info.sectors_per_fat) * 
+                                        vfat_info.bytes_per_sector;
 
     /* Check if the filesystem mounted is FAT32 */
-    size_t root_dir_sectors = (vfat_info.root_max_entries * 32 + vfat_info.bytes_per_sector - 1) /
-                                vfat_info.bytes_per_sector;
     size_t data_sectors = vfat_info.total_sectors - (vfat_info.reserved_sectors + 
-                            vfat_info.fat_count * vfat_info.sectors_per_fat + root_dir_sectors);
+                            vfat_info.fat_count * vfat_info.sectors_per_fat + vfat_info.root_dir_sectors);
     size_t count_of_clusters = data_sectors / vfat_info.sectors_per_cluster;
-
     if (count_of_clusters < 65525)
         err(1, "not a FAT32 drive!");
 
-    /* Parsing and storing BPB information -- continued */
-    // first sector of data region
-    vfat_info.cluster_begin_offset = vfat_info.total_sectors - data_sectors;
-    // number of entries in FAT
+    // number of valid entries in FAT
     vfat_info.fat_entries = count_of_clusters + 2;
-    // number of diectory entries per cluster
-    vfat_info.direntry_per_cluster = (vfat_info.sectors_per_cluster * vfat_info.bytes_per_sector) / 32;
-    // first sector of active FAT
-    vfat_info.fat_begin_offset = vfat_info.reserved_sectors + vfat_info.fat_in_use * vfat_info.sectors_per_fat;
+    /* retrieve FAT */
+    vfat_info.fat = mmap_file(vfat_info.fd, vfat_info.fat_begin_offset, vfat_info.fat_entries * 4);
 
     /* XXX add your code here */
     vfat_info.root_inode.st_ino = le32toh(s.root_cluster);
