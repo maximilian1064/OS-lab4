@@ -25,6 +25,7 @@
 /* constants: bit masks, etc */
 #define IS_NON_MIRRORED_FAT 1u << 7
 #define FAT_ID_MASK 0xf
+#define FAT_ENTRY_MASK 0x0fffffff
 
 iconv_t iconv_utf16;
 char* DEBUGFS_PATH = "/.debug";
@@ -111,7 +112,7 @@ vfat_init(const char *dev)
 int vfat_next_cluster(uint32_t cluster_num)
 {
     /* TODO: Read FAT to actually get the next cluster */
-    return 0xffffff; // no next cluster
+    return vfat_info.fat[cluster_num] & FAT_ENTRY_MASK;
 }
 
 int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbackdata)

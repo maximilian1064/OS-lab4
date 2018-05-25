@@ -29,7 +29,7 @@ int debugfs_fuse_read(const char *path, char *buf, size_t size, off_t offs,
     } else if (CONSUME_PREFIX(path, NEXT_CLUSTER_PATH "/")) {
       unsigned int i;
       if (sscanf(path, "%u", &i) == 1) {
-        eof += sprintf(eof, "%u", vfat_next_cluster(i));
+        eof += sprintf(eof, "%x", vfat_next_cluster(i));
       } else {
         eof += sprintf(eof, "ERROR: Could not parse integer from %s", path);
       }
