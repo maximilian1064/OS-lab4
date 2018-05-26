@@ -26,6 +26,7 @@
 #define IS_NON_MIRRORED_FAT 1u << 7
 #define FAT_ID_MASK 0xf
 #define FAT_ENTRY_MASK 0x0fffffff
+#define SMALLEST_EOC_MARK 0x0ffffff8
 
 iconv_t iconv_utf16;
 char* DEBUGFS_PATH = "/.debug";
@@ -124,6 +125,50 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
     st.st_gid = vfat_info.mount_gid;
     st.st_nlink = 1;
 
+    // go through cluster chains and collect directory entries
+    // TODO: long filename support
+    uint32_t cluster;
+    struct fat32_direntry *cluster_buf;
+    int last_entry_found = 0;
+
+    for (cluster = first_cluster; cluster < SMALLEST_EOC_MARK; cluster = vfat_next_cluster(cluster)) {
+
+        // bring in entire cluster
+        cluster_buf = mmap_file(vfat_info.fd, vfat_info.cluster_begin_offset + (cluster - 2) * vfat_info.cluster_size,
+                    vfat_info.cluster_size);
+
+        // collect valid entries
+        struct fat32_direntry *dir_entry;
+        for (dir_entry = cluster_buf; dir_entry < cluster_buf + vfat_info.direntry_per_cluster; dir_entry++) {
+
+            // check if entry is long file name entry
+            if (dir_entry->attr & VFAT_ATTR_LFN)
+                continue;
+
+            // check if entry is free
+            char dir_name0 = dir_entry->name[0];
+            if (dir_name0 == 0) {
+                last_entry_found = 1;
+                break;
+            } else if (dir_name0 == 0xE5) {
+                continue;
+            } else if (dir_name0 == 0x05) {
+                dir_entry->name[0] = 0xE5;
+            }
+
+            // parse entry and update stat
+            st.st_ino = ((uint32_t)dir_entry->cluster_hi << 16) | (uint32_t)dir_entry->cluster_lo;
+            st.st_size = dir_entry->size;
+
+        }
+
+        unmap(cluster_buf, vfat_info.cluster_size); 
+
+        // finish operation once last entry found
+        if (last_entry_found)
+            break;
+    }
+
     /* XXX add your code here */
     return 0;
 }
@@ -167,10 +212,27 @@ int vfat_resolve(const char *path, struct stat *st)
         - vfat_readdir in conjuction with vfat_search_entry
     */
     int res = -ENOENT; // Not Found
+    char *str = malloc(strlen(path) + 1);
+    char *token;
+    uint32_t first_cluster_curr_dir = vfat_info.root_inode.st_ino;
+    // struct vfat_search_data search_data = {;
+
+    strcpy(str, path);
+
     if (strcmp("/", path) == 0) {
         *st = vfat_info.root_inode;
         res = 0;
+    } else {
+        for (; ; str = NULL) {
+            token = strtok(str, "/");
+            if (!token)
+                break;
+            // vfat_readdir(first_cluster_curr_dir, vfat_search_entry, &call_back_data);
+        }
     }
+    
+    free(str);
+
     return res;
 }
 
