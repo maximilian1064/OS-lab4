@@ -27,6 +27,7 @@
 #define FAT_ID_MASK 0xf
 #define FAT_ENTRY_MASK 0x0fffffff
 #define SMALLEST_EOC_MARK 0x0ffffff8
+#define VFAT_ATTR_READONLY 0x1
 
 iconv_t iconv_utf16;
 char* DEBUGFS_PATH = "/.debug";
@@ -140,25 +141,32 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
         // collect valid entries
         struct fat32_direntry *dir_entry;
         for (dir_entry = cluster_buf; dir_entry < cluster_buf + vfat_info.direntry_per_cluster; dir_entry++) {
-
-            // check if entry is long file name entry
-            if (dir_entry->attr & VFAT_ATTR_LFN)
+            // check if entry is long file name entry or invalid entry
+            if (dir_entry->attr == VFAT_ATTR_LFN) {
                 continue;
+            } else if (dir_entry->attr & VFAT_ATTR_INVAL) {
+                ;
+            } else {
+                // check if entry is free
+                char dir_name0 = dir_entry->name[0];
+                if (dir_name0 == 0) {
+                    last_entry_found = 1;
+                    break;
+                } else if (dir_name0 == 0xE5) {
+                    continue;
+                } else if (dir_name0 == 0x05) {
+                    dir_entry->name[0] = 0xE5;
+                }
 
-            // check if entry is free
-            char dir_name0 = dir_entry->name[0];
-            if (dir_name0 == 0) {
-                last_entry_found = 1;
-                break;
-            } else if (dir_name0 == 0xE5) {
-                continue;
-            } else if (dir_name0 == 0x05) {
-                dir_entry->name[0] = 0xE5;
+                // parse entry and update stat
+                st.st_ino = ((uint32_t)dir_entry->cluster_hi << 16) | (uint32_t)dir_entry->cluster_lo;
+                st.st_size = dir_entry->size;
+                st.st_mode = (dir_entry->attr & VFAT_ATTR_READONLY) ? 0555 : 0777
+                            | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
+
+                // file name
+                char filename[11];
             }
-
-            // parse entry and update stat
-            st.st_ino = ((uint32_t)dir_entry->cluster_hi << 16) | (uint32_t)dir_entry->cluster_lo;
-            st.st_size = dir_entry->size;
 
         }
 
@@ -320,5 +328,8 @@ int main(int argc, char **argv)
         errx(1, "missing file system parameter");
 
     vfat_init(vfat_info.dev);
+    // DEBUG
+    vfat_readdir(2, NULL, NULL);
+
     return (fuse_main(args.argc, args.argv, &vfat_available_ops, NULL));
 }
