@@ -165,7 +165,7 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                             | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
 
                 // file name
-                char filename[13];
+                char *filename = malloc(13);
                 int i, k;
                 // name
                 for (i = 0; i < 8; i++) {
@@ -190,6 +190,16 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 }
                 // DEBUG
                 // printf("%s\n", filename);
+                // printf("ino: %d\n", st.st_ino);
+                // printf("size: %d\n", st.st_size);
+                // printf("DIR?: %d\n", st.st_mode & S_IFDIR);
+
+
+                // make a copy of st
+                // struct stat *st_copy = malloc(sizeof(struct stat)); 
+                // memcpy(st_copy, &st, sizeof(struct stat));
+                // send filename and st to callback
+                callback(callbackdata, filename, &st, 0);
             }
 
         }
@@ -247,7 +257,7 @@ int vfat_resolve(const char *path, struct stat *st)
     char *str = malloc(strlen(path) + 1);
     char *token;
     uint32_t first_cluster_curr_dir = vfat_info.root_inode.st_ino;
-    // struct vfat_search_data search_data = {;
+    struct vfat_search_data search_data = {NULL, 0, st};
 
     strcpy(str, path);
 
@@ -256,11 +266,29 @@ int vfat_resolve(const char *path, struct stat *st)
         res = 0;
     } else {
         for (; ; str = NULL) {
+            // get token in current layer of path
+            // TODO: rm token
             token = strtok(str, "/");
             if (!token)
                 break;
-            // vfat_readdir(first_cluster_curr_dir, vfat_search_entry, &call_back_data);
+
+            // search token in current directory
+            search_data.name = token;
+            search_data.found = 0;
+            vfat_readdir(first_cluster_curr_dir, vfat_search_entry, &search_data);
+            if (search_data.found == 0) {
+                // exit if token not found
+                break;
+            } else {
+                // update current directory
+                first_cluster_curr_dir = search_data.st->st_ino;
+            }
+
+            // DEBUG
+            printf("%s\n", token);
         }
+        if (search_data.found == 1)
+            res = 0;
     }
     
     free(str);
@@ -271,6 +299,9 @@ int vfat_resolve(const char *path, struct stat *st)
 // Get file attributes
 int vfat_fuse_getattr(const char *path, struct stat *st)
 {
+    // DEBUG
+    // printf("getattr: %s\n", path);
+
     if (strncmp(path, DEBUGFS_PATH, strlen(DEBUGFS_PATH)) == 0) {
         // This is handled by debug virtual filesystem
         return debugfs_fuse_getattr(path + strlen(DEBUGFS_PATH), st);
@@ -283,6 +314,9 @@ int vfat_fuse_getattr(const char *path, struct stat *st)
 // Extended attributes useful for debugging
 int vfat_fuse_getxattr(const char *path, const char* name, char* buf, size_t size)
 {
+    // DEBUG
+    // printf("getxattr, %s\n", path);
+
     struct stat st;
     int ret = vfat_resolve(path, &st);
     if (ret != 0) return ret;
@@ -303,12 +337,19 @@ int vfat_fuse_readdir(
         const char *path, void *callback_data,
         fuse_fill_dir_t callback, off_t unused_offs, struct fuse_file_info *unused_fi)
 {
+    // DEBUG
+    // printf("readdir, %s\n", path);
+
     if (strncmp(path, DEBUGFS_PATH, strlen(DEBUGFS_PATH)) == 0) {
         // This is handled by debug virtual filesystem
         return debugfs_fuse_readdir(path + strlen(DEBUGFS_PATH), callback_data, callback, unused_offs, unused_fi);
     }
     /* TODO: Add your code here. You should reuse vfat_readdir and vfat_resolve functions
     */
+    // DEBUG
+    // if (strcmp(path, "/") == 0) {
+    //     return vfat_readdir(vfat_info.root_inode.st_ino, callback, callback_data);
+    // }
     return 0;
 }
 
@@ -316,6 +357,9 @@ int vfat_fuse_read(
         const char *path, char *buf, size_t size, off_t offs,
         struct fuse_file_info *unused)
 {
+    // DEBUG
+    // printf("read, %s\n", path);
+
     if (strncmp(path, DEBUGFS_PATH, strlen(DEBUGFS_PATH)) == 0) {
         // This is handled by debug virtual filesystem
         return debugfs_fuse_read(path + strlen(DEBUGFS_PATH), buf, size, offs, unused);
