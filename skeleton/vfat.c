@@ -143,12 +143,12 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
         for (dir_entry = cluster_buf; dir_entry < cluster_buf + vfat_info.direntry_per_cluster; dir_entry++) {
             // check if entry is long file name entry or invalid entry
             if (dir_entry->attr == VFAT_ATTR_LFN) {
-                continue;
+                ;
             } else if (dir_entry->attr & VFAT_ATTR_INVAL) {
                 ;
             } else {
                 // check if entry is free
-                char dir_name0 = dir_entry->name[0];
+                uint8_t dir_name0 = dir_entry->name[0];
                 if (dir_name0 == 0) {
                     last_entry_found = 1;
                     break;
@@ -165,7 +165,31 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                             | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
 
                 // file name
-                char filename[11];
+                char filename[13];
+                int i, k;
+                // name
+                for (i = 0; i < 8; i++) {
+                    if (dir_entry->name[i] == 0x20)
+                        break;
+                    filename[i] = dir_entry->name[i]; 
+                }
+                // possible dot
+                filename[i] = '.'; 
+                i++;
+                // ext
+                for (k = 0; k < 3; k++) {
+                    if (dir_entry->ext[k] == 0x20)
+                        break;
+                    filename[i + k] = dir_entry->ext[k];
+                }
+                // string terminator
+                if (k == 0) {
+                    filename[i - 1] = '\0';
+                } else {
+                    filename[i + k] = '\0';
+                }
+                // DEBUG
+                // printf("%s\n", filename);
             }
 
         }
@@ -329,7 +353,7 @@ int main(int argc, char **argv)
 
     vfat_init(vfat_info.dev);
     // DEBUG
-    vfat_readdir(2, NULL, NULL);
+    // vfat_readdir(2, NULL, NULL);
 
     return (fuse_main(args.argc, args.argv, &vfat_available_ops, NULL));
 }
