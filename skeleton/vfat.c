@@ -110,6 +110,17 @@ vfat_init(const char *dev)
 }
 
 /* TODO: XXX add your code here */
+/* checksum calculation */
+uint8_t checksum(char *short_name)
+{
+    int i;
+    uint8_t sum = 0;
+    for (i = 11; i != 0; i--) {
+        sum = ((sum & 1) ? 0x80 : 0) + (sum >> 1) + (uint8_t)(*short_name++);
+    }
+
+    return sum;
+}
 
 int vfat_next_cluster(uint32_t cluster_num)
 {
@@ -133,6 +144,12 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
     int last_entry_found = 0;
     int filler_return_one = 0;
 
+    struct fat32_direntry_long *dir_entry_long_set;
+    uint8_t curr_ord;
+    int possible_long_name = 0;
+    uint8_t dir_entry_long_set_size;
+
+
     for (cluster = first_cluster; cluster < SMALLEST_EOC_MARK; cluster = vfat_next_cluster(cluster)) {
 
         // bring in entire cluster
@@ -141,13 +158,115 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
 
         // collect valid entries
         struct fat32_direntry *dir_entry;
+        struct fat32_direntry_long *dir_entry_long;
+
         for (dir_entry = cluster_buf; dir_entry < cluster_buf + vfat_info.direntry_per_cluster; dir_entry++) {
-            // check if entry is long file name entry or invalid entry
+            // get a pointer of long entry type
+            dir_entry_long = dir_entry;
+
+            // entry is "free" or "last" entry ?
+            // free the long entry set buffer if preceded by long entries
+            // they are orphans in these cases
+            if (dir_entry_long->seq == 0) {
+                if (possible_long_name) {
+                    possible_long_name = 0;
+                    free(dir_entry_long_set);
+                }
+                last_entry_found = 1;
+                break;
+            } else if (dir_entry_long->seq == 0xE5) {
+                if (possible_long_name) {
+                    possible_long_name = 0;
+                    free(dir_entry_long_set);
+                }
+                continue;
+            }
+
+            // long filename entry? 
             if (dir_entry->attr == VFAT_ATTR_LFN) {
-                ;
+                // first long entry in set?
+                if ((dir_entry_long->seq & VFAT_LFN_SEQ_START) == VFAT_LFN_SEQ_START) {
+                    curr_ord = dir_entry_long->seq & VFAT_LFN_SEQ_MASK;
+                    possible_long_name = 1;
+                    dir_entry_long_set_size = curr_ord;
+                    dir_entry_long_set = malloc(sizeof(struct fat32_direntry_long) * curr_ord);
+                    dir_entry_long_set[curr_ord - 1] = *dir_entry_long;
+                // normal long entry in set
+                } else if (possible_long_name) {
+                    curr_ord--;
+                    // non-contiguous ord number, ORPHAN
+                    if ((curr_ord == 0) || (dir_entry_long->seq != curr_ord)) {
+                        possible_long_name = 0;
+                        free(dir_entry_long_set);
+                        // continue;
+                    } else {
+                        dir_entry_long_set[curr_ord - 1] = *dir_entry_long;
+                    }
+                // standalone long entry, ORPHAN
+                } else {
+                    // continue;
+                }
+            // invalid entry?
+            // free the long entry set buffer if preceded by long entries
+            // they are orphans in these cases
             } else if (dir_entry->attr & VFAT_ATTR_INVAL) {
-                ;
+                if (possible_long_name) {
+                    possible_long_name = 0;
+                    free(dir_entry_long_set);
+                }
+                // continue;
+            // short name entry
             } else {
+                char *filename;
+
+                // get long name into filename if entries valid
+                if (possible_long_name) {
+                    // get checksum of short entry
+                    // TODO: change all these shitty mallocs to static array!!!
+                    uint8_t checksum_short = checksum(dir_entry->nameext);
+                    uint8_t curr_entry;
+                    char *curr_name_piece = malloc(26);
+                    char *curr_name_piece_utf8 = malloc(13);
+                    char *curr_name_piece_tmp;
+                    char *curr_name_piece_utf8_tmp;
+                    filename = malloc((dir_entry_long_set_size * 13) + 1);
+                    filename[dir_entry_long_set_size * 13] = '\0';
+                    size_t utf16len, utf8len;
+
+                    for (curr_entry = 0; curr_entry < dir_entry_long_set_size; curr_entry++) {
+                        // check checksum
+                        if (checksum_short != dir_entry_long_set[curr_entry].csum) {
+                            possible_long_name = 0;
+                            break;
+                        } else {
+                            // append the name piece in current long entry to filename
+                            utf16len = 26;
+                            utf8len = 13;
+                            curr_name_piece_tmp = curr_name_piece;
+                            curr_name_piece_utf8_tmp = curr_name_piece_utf8;
+                            memcpy(curr_name_piece, dir_entry_long_set[curr_entry].name1, 10);
+                            memcpy(curr_name_piece + 10, dir_entry_long_set[curr_entry].name2, 12);
+                            memcpy(curr_name_piece + 22, dir_entry_long_set[curr_entry].name3, 4);
+                            iconv(iconv_utf16, &curr_name_piece_tmp, &utf16len,
+                                    &curr_name_piece_utf8_tmp, &utf8len);
+                            memcpy(filename + curr_entry * 13, curr_name_piece_utf8, 13);
+                        }
+                    }
+
+                    free(curr_name_piece);
+                    free(curr_name_piece_utf8);
+
+                    // DEBUG
+                    // printf("%s\n", filename);
+                }
+
+                // get short file name if long name entries are not valid
+                if (!possible_long_name) {
+
+                } else {
+                    possible_long_name = 0;
+                    free(dir_entry_long_set);
+                }
                 // check if entry is free
                 uint8_t dir_name0 = dir_entry->name[0];
                 if (dir_name0 == 0) {
@@ -177,7 +296,7 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 st.st_mode = 0555 | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
 
                 // file name
-                char *filename = malloc(13);
+                filename = malloc(13);
                 int i, k;
                 // name
                 for (i = 0; i < 8; i++) {
