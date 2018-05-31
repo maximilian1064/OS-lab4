@@ -159,12 +159,20 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 }
 
                 // parse entry and update stat
-                // TODO: check why size of dir is 0???
-                // TODO: fix the mode
+                // use first cluster number as st_ino
                 st.st_ino = ((uint32_t)dir_entry->cluster_hi << 16) | (uint32_t)dir_entry->cluster_lo;
-                st.st_size = dir_entry->size;
-                st.st_mode = (dir_entry->attr & VFAT_ATTR_READONLY) ? 0555 : 0777
-                            | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
+                // directory is sized by following its cluster chain to EOC mark 
+                if (dir_entry->attr & VFAT_ATTR_DIR) {
+                    size_t num_cluster = 0;
+                    uint32_t curr_cluster = st.st_ino;
+                    for (; curr_cluster < SMALLEST_EOC_MARK; curr_cluster = vfat_next_cluster(curr_cluster))
+                        num_cluster++;
+                    st.st_size = num_cluster * vfat_info.cluster_size;
+                } else {
+                    st.st_size = dir_entry->size;
+                }
+                // we are doing read-only system
+                st.st_mode = 0555 | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
 
                 // file name
                 char *filename = malloc(13);
@@ -271,6 +279,7 @@ int vfat_resolve(const char *path, struct stat *st)
         for (; ; str = NULL) {
             // get token in current layer of path
             // TODO: rm token
+            // TODO: use reentrant strtok?
             token = strtok(str, "/");
             if (!token)
                 break;
