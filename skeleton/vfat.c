@@ -29,6 +29,14 @@
 #define SMALLEST_EOC_MARK 0x0ffffff8
 #define VFAT_ATTR_READONLY 0x1
 
+#define VFAT_DATE_DAY_MASK 0x1f
+#define VFAT_DATE_MONTH_MASK 0x1e0
+#define VFAT_DATE_YEAR_MASK 0xfe00
+
+#define VFAT_TIME_DAY_MASK 0x1f
+#define VFAT_TIME_MONTH_MASK 0x7e0
+#define VFAT_TIME_YEAR_MASK 0xf800
+
 iconv_t iconv_utf16;
 char* DEBUGFS_PATH = "/.debug";
 
@@ -120,6 +128,67 @@ uint8_t checksum(char *short_name)
     }
 
     return sum;
+}
+
+/* not completed */
+long fat_date(uint16_t FAT_date)
+{
+    long year = (FAT_date & VFAT_DATE_YEAR_MASK) >> 9;
+    long month = (FAT_date & VFAT_DATE_MONTH_MASK) >> 5;
+    long day = (FAT_date & VFAT_DATE_DAY_MASK);
+    long date = 0;
+    long month_date;
+    date += (year + 10) * 365 + ((year + 10 - 3) / 4) + 1;
+    switch(month) {
+        case 1 :
+            month_date = 0;
+            break;
+        case 2 :
+            month_date = 31;
+            break;
+        case 3 :
+            month_date = ((year + 8) % 4) ? 59 : 60;
+            break;
+        case 4 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 31;
+            break;
+        case 5 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 61;
+            break;
+        case 6 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 92;
+            break;
+        case 7 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 122;
+            break;
+        case 8 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 153;
+            break;
+        case 9 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 184;
+            break;
+        case 10 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 214;
+            break;
+        case 11 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 245;
+            break;
+        case 12 :
+            month_date = (((year + 8) % 4) ? 59 : 60) + 275;
+            break;
+        default :
+            break;
+    }
+    date += month_date + day - 1;
+    return date;
+}
+
+long fat_time(uint16_t FAT_time)
+{
+    long hours = (FAT_time & VFAT_TIME_YEAR_MASK) >> 11;
+    long minutes = (FAT_time & VFAT_TIME_MONTH_MASK) >> 5;
+    long seconds = (FAT_time & VFAT_TIME_DAY_MASK) * 2;
+    return (hours * 3600) + (minutes * 60) + seconds;
 }
 
 int vfat_next_cluster(uint32_t cluster_num)
@@ -314,6 +383,9 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 // we are doing read-only system
                 st.st_mode = 0555 | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
                 // atime/mtime/ctime
+                st.st_atime = fat_date(dir_entry->atime_date) * 3600 * 24;
+                st.st_mtime = fat_date(dir_entry->mtime_date) * 3600 * 24 + fat_time(dir_entry->mtime_time);
+                st.st_ctime = fat_date(dir_entry->ctime_date) * 3600 * 24 + fat_time(dir_entry->ctime_time);
 
 
                 // DEBUG
