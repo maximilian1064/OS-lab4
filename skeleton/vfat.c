@@ -205,6 +205,7 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 // standalone long entry, ORPHAN
                 } else {
                     // continue;
+                    ;
                 }
             // invalid entry?
             // free the long entry set buffer if preceded by long entries
@@ -253,6 +254,8 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                         }
                     }
 
+                    // free long name entry set buffer
+                    free(dir_entry_long_set);
                     free(curr_name_piece);
                     free(curr_name_piece_utf8);
 
@@ -262,21 +265,37 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
 
                 // get short file name if long name entries are not valid
                 if (!possible_long_name) {
-
+                    if (dir_entry->name[0] == 0x05)
+                        dir_entry->name[0] = 0xE5;
+                    // short file name
+                    filename = malloc(13);
+                    int i, k;
+                    // name
+                    for (i = 0; i < 8; i++) {
+                        if (dir_entry->name[i] == 0x20)
+                            break;
+                        filename[i] = dir_entry->name[i]; 
+                    }
+                    // possible dot
+                    filename[i] = '.'; 
+                    i++;
+                    // ext
+                    for (k = 0; k < 3; k++) {
+                        if (dir_entry->ext[k] == 0x20)
+                            break;
+                        filename[i + k] = dir_entry->ext[k];
+                    }
+                    // string terminator
+                    if (k == 0) {
+                        filename[i - 1] = '\0';
+                    } else {
+                        filename[i + k] = '\0';
+                    }
+                // reset possible_long_name    
                 } else {
                     possible_long_name = 0;
-                    free(dir_entry_long_set);
                 }
-                // check if entry is free
-                uint8_t dir_name0 = dir_entry->name[0];
-                if (dir_name0 == 0) {
-                    last_entry_found = 1;
-                    break;
-                } else if (dir_name0 == 0xE5) {
-                    continue;
-                } else if (dir_name0 == 0x05) {
-                    dir_entry->name[0] = 0xE5;
-                }
+
 
                 // parse entry and update stat
                 // use first cluster number as st_ino
@@ -294,31 +313,9 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 }
                 // we are doing read-only system
                 st.st_mode = 0555 | ((dir_entry->attr & VFAT_ATTR_DIR) ? S_IFDIR : S_IFREG);
+                // atime/mtime/ctime
 
-                // file name
-                filename = malloc(13);
-                int i, k;
-                // name
-                for (i = 0; i < 8; i++) {
-                    if (dir_entry->name[i] == 0x20)
-                        break;
-                    filename[i] = dir_entry->name[i]; 
-                }
-                // possible dot
-                filename[i] = '.'; 
-                i++;
-                // ext
-                for (k = 0; k < 3; k++) {
-                    if (dir_entry->ext[k] == 0x20)
-                        break;
-                    filename[i + k] = dir_entry->ext[k];
-                }
-                // string terminator
-                if (k == 0) {
-                    filename[i - 1] = '\0';
-                } else {
-                    filename[i + k] = '\0';
-                }
+
                 // DEBUG
                 // printf("%s\n", filename);
                 // printf("ino: %d\n", st.st_ino);
