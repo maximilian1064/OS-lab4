@@ -159,6 +159,8 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 }
 
                 // parse entry and update stat
+                // TODO: check why size of dir is 0???
+                // TODO: fix the mode
                 st.st_ino = ((uint32_t)dir_entry->cluster_hi << 16) | (uint32_t)dir_entry->cluster_lo;
                 st.st_size = dir_entry->size;
                 st.st_mode = (dir_entry->attr & VFAT_ATTR_READONLY) ? 0555 : 0777
@@ -199,6 +201,7 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 // struct stat *st_copy = malloc(sizeof(struct stat)); 
                 // memcpy(st_copy, &st, sizeof(struct stat));
                 // send filename and st to callback
+                // TODO: check callback value
                 callback(callbackdata, filename, &st, 0);
             }
 
@@ -285,7 +288,7 @@ int vfat_resolve(const char *path, struct stat *st)
             }
 
             // DEBUG
-            printf("%s\n", token);
+            // printf("%s\n", token);
         }
         if (search_data.found == 1)
             res = 0;
@@ -346,6 +349,16 @@ int vfat_fuse_readdir(
     }
     /* TODO: Add your code here. You should reuse vfat_readdir and vfat_resolve functions
     */
+    struct stat *st = malloc(sizeof(struct stat));
+    int res = vfat_resolve(path, st);
+    // clever unix tool like "ls" will check the file stat before calling readdir
+    // but still check here for safety
+    if (res)
+        return res;
+    if (st->st_mode & S_IFREG)
+        return -ENOTDIR;
+    vfat_readdir(st->st_ino, callback, callback_data);
+    free(st);
     // DEBUG
     // if (strcmp(path, "/") == 0) {
     //     return vfat_readdir(vfat_info.root_inode.st_ino, callback, callback_data);
