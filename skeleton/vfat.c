@@ -131,6 +131,7 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
     uint32_t cluster;
     struct fat32_direntry *cluster_buf;
     int last_entry_found = 0;
+    int filler_return_one = 0;
 
     for (cluster = first_cluster; cluster < SMALLEST_EOC_MARK; cluster = vfat_next_cluster(cluster)) {
 
@@ -162,6 +163,7 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 // use first cluster number as st_ino
                 st.st_ino = ((uint32_t)dir_entry->cluster_hi << 16) | (uint32_t)dir_entry->cluster_lo;
                 // directory is sized by following its cluster chain to EOC mark 
+                // TODO: why ls total still zero
                 if (dir_entry->attr & VFAT_ATTR_DIR) {
                     size_t num_cluster = 0;
                     uint32_t curr_cluster = st.st_ino;
@@ -208,18 +210,23 @@ int vfat_readdir(uint32_t first_cluster, fuse_fill_dir_t callback, void *callbac
                 // make a copy of st
                 // struct stat *st_copy = malloc(sizeof(struct stat)); 
                 // memcpy(st_copy, &st, sizeof(struct stat));
-                // send filename and st to callback
-                // TODO: check callback value
-                callback(callbackdata, filename, &st, 0);
+
+                // send filename and st to filler 
+                if (callback(callbackdata, filename, &st, 0) == 1) {
+                    filler_return_one = 1;
+                    break;
+                }
             }
 
         }
 
         unmap(cluster_buf, vfat_info.cluster_size); 
 
-        // finish operation once last entry found
+        // finish operation once last entry found or filler returns 1 
         if (last_entry_found)
             break;
+        if (filler_return_one)
+            return 1;
     }
 
     /* XXX add your code here */
@@ -362,11 +369,20 @@ int vfat_fuse_readdir(
     int res = vfat_resolve(path, st);
     // clever unix tool like "ls" will check the file stat before calling readdir
     // but still check here for safety
-    if (res)
+    if (res) {
+        free(st);
         return res;
-    if (st->st_mode & S_IFREG)
+    }
+    if (st->st_mode & S_IFREG) {
+        free(st);
         return -ENOTDIR;
-    vfat_readdir(st->st_ino, callback, callback_data);
+    }
+    if (vfat_readdir(st->st_ino, callback, callback_data)) {
+        free(st);
+        // DEBUG
+        // printf("-1\n");
+        return -1;
+    }
     free(st);
     // DEBUG
     // if (strcmp(path, "/") == 0) {
