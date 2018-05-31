@@ -404,7 +404,56 @@ int vfat_fuse_read(
     }
     /* TODO: Add your code here. Look at debugfs_fuse_read for example interaction.
     */
-    return 0;
+    // resolve path
+    struct stat *st = malloc(sizeof(struct stat));
+    int res = vfat_resolve(path, st);
+    if (res) {
+        free(st);
+        return res;
+    }
+    if (st->st_mode & S_IFDIR) {
+        free(st);
+        return -EISDIR;
+    }
+
+    // actual read 
+    off_t eof = st->st_size;
+    size_t len;
+    off_t first_cluster, last_cluster;
+    // get actual length of bytes to be read
+    if (offs >= eof) {
+        free(st);
+        return 0;
+    } else if (offs + size > eof) {
+        len = eof - offs;
+    } else {
+        len = size;
+    }
+    // relevant clusters
+    first_cluster = offs / vfat_info.cluster_size;
+    last_cluster = (offs + len - 1) / vfat_info.cluster_size;
+
+    // put relevant clusters into a temporay buffer
+    char *tmp_buf = malloc(vfat_info.cluster_size * (last_cluster - first_cluster + 1));
+    char *cluster_buf;
+    off_t curr_cluster = 0;
+    uint32_t curr_cluster_num = st->st_ino;
+    for (; curr_cluster < first_cluster; curr_cluster_num = vfat_next_cluster(curr_cluster_num), curr_cluster++)
+        ;
+    for (; curr_cluster <= last_cluster; curr_cluster_num = vfat_next_cluster(curr_cluster_num), curr_cluster++) {
+        cluster_buf = mmap_file(vfat_info.fd, vfat_info.cluster_begin_offset + (curr_cluster_num - 2) * vfat_info.cluster_size,
+                    vfat_info.cluster_size);
+        memcpy(tmp_buf + (curr_cluster - first_cluster) * vfat_info.cluster_size, cluster_buf, 
+                vfat_info.cluster_size);
+        unmap(cluster_buf, vfat_info.cluster_size);
+    }
+
+    // copy relevant bytes to buf
+    memcpy(buf, tmp_buf + offs - (first_cluster * vfat_info.cluster_size), len);
+
+    free(tmp_buf);
+
+    return len;
 }
 
 ////////////// No need to modify anything below this point
