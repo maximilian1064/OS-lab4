@@ -1,0 +1,4 @@
+Lei Yan Assignment 4
+
+All requirements fullfilled
+NOTE: vfat_next_cluster() returns the masked cluster number with 0x0fffffff
